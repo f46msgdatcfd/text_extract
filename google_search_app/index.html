@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Google Search Tool</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        label { display: inline-block; width: 150px; margin: 5px 0; }
+        input, button { margin: 5px 0; }
+        #results { margin-top: 20px; }
+        .error { color: red; }
+        #downloadBtn { display: none; }
+    </style>
+</head>
+<body>
+    <h1>Google Search Tool</h1>
+    <form id="searchForm">
+        <label for="search_terms">Search Terms:</label>
+        <input type="text" id="search_terms" name="search_terms" placeholder="e.g., best cfd broker" required><br>
+
+        <label for="mustinclude_terms">Must Include Terms:</label>
+        <input type="text" id="mustinclude_terms" name="mustinclude_terms" placeholder="e.g., Oanda"><br>
+
+        <label for="ui_language">UI Language:</label>
+        <input type="text" id="ui_language" name="ui_language" placeholder="e.g., fr"><br>
+
+        <label for="content_language">Content Language:</label>
+        <input type="text" id="content_language" name="content_language" placeholder="e.g., lang_en"><br>
+
+        <label for="exclude_terms">Exclude Terms:</label>
+        <input type="text" id="exclude_terms" name="exclude_terms" placeholder="e.g., scam"><br>
+
+        <label for="or_terms">OR Terms:</label>
+        <input type="text" id="or_terms" name="or_terms" placeholder="e.g., forex trading"><br>
+
+        <label for="start_date">Start Date (YYYYMMDD):</label>
+        <input type="text" id="start_date" name="start_date" placeholder="e.g., 20230101"><br>
+
+        <label for="end_date">End Date (YYYYMMDD):</label>
+        <input type="text" id="end_date" name="end_date" placeholder="e.g., 20231231"><br>
+
+        <label for="server_country">Server Country:</label>
+        <input type="text" id="server_country" name="server_country" placeholder="e.g., countryUS"><br>
+
+        <label for="user_location">User Location:</label>
+        <input type="text" id="user_location" name="user_location" placeholder="e.g., ca"><br>
+
+        <label for="max_results">Max Results (1-100):</label>
+        <input type="number" id="max_results" name="max_results" min="1" max="100" value="100"><br>
+
+        <button type="submit">Search</button>
+    </form>
+    <button id="downloadBtn" onclick="downloadCSV()">Download CSV</button>
+    <div id="results"></div>
+
+    <script>
+        let searchResults = [];
+
+        document.getElementById('searchForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            const params = {
+                search_terms: document.getElementById('search_terms').value,
+                mustinclude_terms: document.getElementById('mustinclude_terms').value || null,
+                ui_language: document.getElementById('ui_language').value || null,
+                content_language: document.getElementById('content_language').value || null,
+                exclude_terms: document.getElementById('exclude_terms').value || null,
+                or_terms: document.getElementById('or_terms').value || null,
+                start_date: document.getElementById('start_date').value || null,
+                end_date: document.getElementById('end_date').value || null,
+                server_country: document.getElementById('server_country').value || null,
+                user_location: document.getElementById('user_location').value || null,
+                max_results: parseInt(document.getElementById('max_results').value) || 100
+            };
+
+            const queryString = new URLSearchParams(params).toString();
+            const apiUrl = `http://localhost:8000/search?${queryString}`;
+
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Loading...</p>';
+
+            fetch(apiUrl)
+                .then(response => {
+                    if (!response.ok) throw new Error('Search failed');
+                    return response.json();
+                })
+                .then(data => {
+                    searchResults = data;
+                    const downloadBtn = document.getElementById('downloadBtn');
+                    if (data.length === 0) {
+                        resultsDiv.innerHTML = '<p>No results found.</p>';
+                        downloadBtn.style.display = 'none';
+                        return;
+                    }
+                    let html = '<h2>Search Results:</h2><ol>';
+                    data.forEach((item, index) => {
+                        html += `<li><strong>${item.title}</strong><br><a href="${item.link}" target="_blank">${item.link}</a></li>`;
+                    });
+                    html += '</ol>';
+                    resultsDiv.innerHTML = html;
+                    downloadBtn.style.display = 'inline-block';
+                })
+                .catch(error => {
+                    resultsDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                    document.getElementById('downloadBtn').style.display = 'none';
+                });
+        });
+
+        function downloadCSV() {
+            if (searchResults.length === 0) {
+                alert("No results to download!");
+                return;
+            }
+            const csvContent = [
+                "Title,URL",
+                ...searchResults.map(item => `"${item.title.replace(/"/g, '""')}","${item.link}"`)
+            ].join("\n");
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `search_results_${document.getElementById('search_terms').value.replace(' ', '_')}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
