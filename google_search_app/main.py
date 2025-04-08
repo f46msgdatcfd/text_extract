@@ -68,7 +68,8 @@ def google_search_all_results(
             for item in data["items"]:
                 title = item.get("title", "No title available")
                 link = item.get("link", "No link available")
-                all_results.append({"title": title, "link": link})
+                snippet = item.get("snippet","No Snippet available")
+                all_results.append({"title": title, "link": link,"snippet": snippet})
                 if len(all_results) >= max_results:
                     break
 
@@ -86,7 +87,7 @@ def google_search_all_results(
 
 @app.get("/search")
 async def search(
-    search_terms: str,
+    search_terms: str = None,
     mustinclude_terms: str = None,
     ui_language: str = None,
     content_language: str = None,
