@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Conda environment files
+env/
+.venv/
+*.conda
+*.env
+*.envrc
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
+
+# Logs and runtime files
+*.log
+*.out
+*.pid
+
+# Secret configs (optional: keep this if you use .env files)
+.env
+.env.*
+
+# System-specific files
+Thumbs.db
+ehthumbs.db
+cat << EOF > .gitignore
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Conda / venv
+env/
+.venv/
+*.conda
+*.env
+*.envrc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
+*.out
+*.pid
+
+# Secrets
+.env
+.env.*
+EOF
+
