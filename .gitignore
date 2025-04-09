@@ -1,0 +1,6 @@
+# 输出目录
+output_*/
+screenshots_*/
+__pycache__/
+*.log
+*.pyc
