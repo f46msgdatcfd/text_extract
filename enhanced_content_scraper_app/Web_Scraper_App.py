@@ -8,7 +8,7 @@ st.set_page_config(page_title="网页爬虫助手", layout="wide")
 st.title("🌐 高鲁棒性网页爬虫系统")
 
 st.markdown("""
-欢迎使用本地部署的网页内容爬虫助手。
+欢迎使用Winter为您构建的新闻text内容爬虫助手。
 - 上传包含 URL 的 Excel 或 CSV 文件
 - 选择 URL 所在列
 - 一键启动爬虫任务
