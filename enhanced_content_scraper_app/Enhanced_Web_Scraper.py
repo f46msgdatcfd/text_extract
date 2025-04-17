@@ -15,16 +15,27 @@ from playwright.sync_api import sync_playwright
 # ========== 全局变量控制输出路径前缀 ==========
 FILE_PREFIX = "default"
 
+def setup_logging(prefix: str):
+    log_dir = Path(f"output_{prefix}")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "scraper.log"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_path, encoding="utf-8"),
+            logging.StreamHandler()
+        ]
+    )
+    logging.info(f"🟢 日志系统已初始化。日志文件路径：{log_path}")
+
 def set_file_prefix(prefix: str):
     global FILE_PREFIX
     FILE_PREFIX = prefix
     Path(f"screenshots_{FILE_PREFIX}").mkdir(parents=True, exist_ok=True)
     Path(f"output_{FILE_PREFIX}").mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=f"output_{FILE_PREFIX}/failed_urls.log",
-        level=logging.WARNING,
-        format="%(asctime)s - %(message)s"
-    )
+    setup_logging(prefix)
 
 # ========== Cookie 注入相关 ==========
 def load_session_cookies(domain_keyword):
@@ -65,9 +76,12 @@ class ExcelWriterHelper:
 
     @staticmethod
     def clean_text(text):
-        if not text:
+        if pd.isna(text):
             return ""
-        return str(text).strip().replace("\u200b", "").replace("\u200e", "")
+        text = str(text)
+        text = re.sub(r"[\x00-\x1F\x7F]", "", text)
+        text = text.strip().replace("\u200b", "").replace("\u200e", "")
+        return text
 
     @staticmethod
     def truncate_text(text):
@@ -83,23 +97,56 @@ class ExcelWriterHelper:
 
     @classmethod
     def preprocess_record(cls, record: dict) -> dict:
-        return {
-            k: cls.escape_excel_formula(cls.truncate_text(cls.clean_text(v)))
-            for k, v in record.items()
-        }
+        processed = {}
+        for k, v in record.items():
+            if isinstance(v, (dict, list)):
+                v = json.dumps(v, ensure_ascii=False)
+            v = cls.clean_text(v)
+            v = cls.truncate_text(v)
+            v = cls.escape_excel_formula(v)
+            processed[k] = v
+        return processed
 
     @classmethod
-    def write_to_excel(cls, records: list, filename: str):
-        df = pd.DataFrame([cls.preprocess_record(r) for r in records])
-        df.fillna("", inplace=True)
-        df.to_excel(filename, index=False)
-        print(f"✅ Excel 已保存：{filename}")
+    def write_all_outputs(cls, records: list, prefix: str):
+        if not records:
+            print("⚠️ 无数据可写入。")
+            return
+
+        output_dir = Path(f"output_{prefix}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        json_path = output_dir / f"{prefix}.json"
+        excel_path = output_dir / f"{prefix}.xlsx"
+        csv_path = output_dir / f"{prefix}.csv"
+
+        all_keys = set(k for r in records for k in r.keys())
+        standardized_records = [{k: r.get(k, "") for k in all_keys} for r in records]
+
+        try:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(standardized_records, f, ensure_ascii=False, indent=2)
+            logging.info(f"✅ JSON 已保存：{json_path}")
+        except Exception as e:
+            logging.exception(f"❌ 写入 JSON 失败：{e}")
+
+        try:
+            df = pd.DataFrame([cls.preprocess_record(r) for r in standardized_records])
+            df.fillna("", inplace=True)
+            df.to_excel(excel_path, index=False)
+            logging.info(f"✅ Excel 已保存：{excel_path}")
+        except Exception as e:
+            logging.exception(f"❌ 写入 Excel 失败：{e}")
+
+        try:
+            pd.DataFrame(standardized_records).to_csv(csv_path, index=False, encoding="utf-8-sig")
+            logging.info(f"✅ CSV 已保存：{csv_path}")
+        except Exception as e:
+            logging.exception(f"❌ 写入 CSV 失败：{e}")
 
 # ========== 发布时间提取 ==========
 def extract_publish_date_from_html(html: str) -> str:
     soup = BeautifulSoup(html, "lxml")
-
-    # 1. ✅ meta 标签匹配
     meta_selectors = [
         {'name': 'pubdate'}, {'name': 'publishdate'}, {'name': 'date'},
         {'name': 'dc.date.issued'}, {'property': 'article:published_time'},
@@ -112,18 +159,15 @@ def extract_publish_date_from_html(html: str) -> str:
             if parsed:
                 return parsed.isoformat()
 
-    # 2. ✅ time 标签的 datetime 属性
     time_tag = soup.find("time", attrs={"datetime": True})
     if time_tag:
         parsed = dateparser.parse(time_tag["datetime"])
         if parsed:
             return parsed.isoformat()
 
-    # 3. ✅ 结构型 fallback：带 published 的 div/span 等
     for tag in soup.find_all(["div", "span", "p"], class_=re.compile(r"(date|meta|info|time)", re.I)):
         text = tag.get_text(separator=" ", strip=True)
         if "published" in text.lower():
-            # 例如 Published: Dec 21, 2022 10:00 AM SGT
             date_match = re.search(r"(?:published\\W*)?(\\w+ \\d{1,2}, \\d{4}[^\\n]*)", text, re.I)
             if date_match:
                 parsed = dateparser.parse(date_match.group(1))
@@ -132,7 +176,7 @@ def extract_publish_date_from_html(html: str) -> str:
 
     return None
 
-# ========== 其他辅助信息提取 ==========
+# ========== 内容辅助提取 ==========
 def extract_author(soup):
     meta = soup.find("meta", attrs={"name": "author"})
     if meta and meta.get("content"):
@@ -162,7 +206,7 @@ def detect_failure_reason(html: str, title: str, content: str) -> str:
         return "no content"
     return "ok"
 
-# ========== 核心抓取逻辑（requests + playwright） ==========
+# ========== 网页内容抓取 ==========
 def enhanced_fetch_html(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -204,11 +248,13 @@ def enhanced_fetch_html(url):
             if browser:
                 browser.close()
 
-# ========== 新闻页内容抓取统一接口 ==========
+# ========== 提取页面内容 ==========
 def extract_news_content(url):
+    logging.info(f"开始抓取: {url}")
     html, screenshot_path = enhanced_fetch_html(url)
     has_screenshot = bool(screenshot_path)
     if not html:
+        logging.warning(f"❌ 抓取失败: {url} | 截图: {screenshot_path}")
         return {
             "url": url,
             "content": None,
@@ -226,6 +272,8 @@ def extract_news_content(url):
     full_text = "\n".join(paragraphs)
     title = extract_title(soup)
     failed_reason = detect_failure_reason(html, title, full_text)
+    method = "playwright" if "<html" in html and "</html>" in html else "requests"
+    logging.info(f"✅ 抓取成功: {url} | 方法: {method}")
     return {
         "url": url,
         "content": full_text,
@@ -233,13 +281,13 @@ def extract_news_content(url):
         "title": title,
         "author": extract_author(soup),
         "scrape_time": datetime.now(timezone.utc).isoformat(),
-        "method": "playwright" if "<html" in html and "</html>" in html else "requests",
+        "method": method,
         "failed_reason": failed_reason,
         "screenshot": screenshot_path or "",
         "has_screenshot": has_screenshot
     }
 
-# ========== 批量抓取接口 ==========
+# ========== 批量抓取 ==========
 def scrape_multiple_urls(url_list, output_prefix="default"):
     set_file_prefix(output_prefix)
     results = []
@@ -247,25 +295,15 @@ def scrape_multiple_urls(url_list, output_prefix="default"):
         for result in executor.map(extract_news_content, url_list):
             results.append(result)
 
-    output_dir = Path(f"output_{FILE_PREFIX}")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    json_path = output_dir / f"{FILE_PREFIX}.json"
-    excel_path = output_dir / f"{FILE_PREFIX}.xlsx"
-    csv_path = output_dir / f"{FILE_PREFIX}.csv"
-
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-
-    ExcelWriterHelper.write_to_excel(results, str(excel_path))
-    pd.DataFrame(results).to_csv(csv_path, index=False, encoding="utf-8-sig")
-
+    ExcelWriterHelper.write_all_outputs(results, FILE_PREFIX)
+    logging.info(f"🟢 全部处理完成，共 {len(results)} 条记录。")
     return results
 
-# ========== 从 Excel 文件读取 URL 并批量抓取 ==========
+# ========== 从 Excel 文件读取 URL 并抓取 ==========
 def scrape_from_excel(filepath: str, url_column: str = "url"):
     filename = Path(filepath).stem
     df = pd.read_excel(filepath)
     urls = df[url_column].dropna().tolist()
     scrape_multiple_urls(urls, output_prefix=filename)
+
 
